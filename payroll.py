@@ -1,0 +1,330 @@
+import datetime
+from datetime import timedelta, time, date
+import config
+
+
+class PayrollSystem:
+
+    POSITION_SHIFTS = {
+        "Manager": {"start": time(9, 0), "end": time(17, 0), "window_hours": 8},
+        "Sales": {"start": time(7, 0), "end": time(15, 0), "window_hours": 8},
+        "HR": {"start": time(8, 0), "end": time(16, 0), "window_hours": 8},
+        "Production Worker A": {"start": time(7, 0), "end": time(15, 0), "window_hours": 8},
+        "Production Worker B": {"start": time(15, 0), "end": time(23, 0), "window_hours": 8},
+    }
+
+    GUARD_SHIFTS = [
+        {"start": time(6, 0), "end": time(14, 0), "window_hours": 8, "shift_name": "Shift A (6AM-2PM)"},
+        {"start": time(14, 0), "end": time(22, 0), "window_hours": 8, "shift_name": "Shift B (2PM-10PM)"},
+        {"start": time(22, 0), "end": time(6, 0), "window_hours": 8, "shift_name": "Shift C (10PM-6AM)"},
+    ]
+
+    def __init__(self, db_conn):
+        self.conn = db_conn
+
+    def calculate_daily_rate(self, monthly_salary):
+        return monthly_salary / 20 if monthly_salary else 0
+
+    def calculate_deductions(self, gross_salary):
+        if gross_salary <= 0:
+            return 0.0, 0.0, 0.0, 0.0
+
+        sss = gross_salary * config.SSS_RATE
+        pagibig = min(gross_salary, 5000) * config.PAGIBIG_RATE
+        philhealth = gross_salary * config.PHILHEALTH_RATE
+        taxable_income = gross_salary - (sss + pagibig + philhealth)
+        tax = taxable_income * config.TAX_RATE if taxable_income > 0 else 0.0
+
+        return sss, pagibig, philhealth, tax
+
+    def get_approved_leaves(self, employee_id, start_date, end_date):
+        cursor = self.conn.cursor()
+        query = """
+            SELECT date, leave_type
+            FROM leaves
+            WHERE employee_id = ? AND status = 'Approved' AND date BETWEEN ? AND ?
+        """
+        cursor.execute(query, (employee_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
+        leave_map = {}
+        for d, lt in cursor.fetchall():
+            if lt == 'SL':
+                leave_map[d] = ('SL', 1.0)
+            elif lt == 'VL':
+                leave_map[d] = ('VL', 1.0)
+            elif lt == 'VLH':
+                leave_map[d] = ('VLH', 0.5)
+            else:
+                leave_map[d] = (lt, 1.0)
+        cursor.close()
+        return leave_map
+
+    def get_employee_schedule(self, employee_id, month, year):
+        cursor = self.conn.cursor()
+        employee_data = cursor.execute("SELECT position, department FROM employees WHERE id=?", (employee_id,)).fetchone()
+        if not employee_data:
+            cursor.close()
+            return {}, 0
+
+        position, department = employee_data
+        schedule = {}
+
+        start_date = date(year, month, 1)
+        end_date = (start_date.replace(day=28) + timedelta(days=4))
+        end_date = end_date - timedelta(days=end_date.day)
+
+        current = start_date
+        weekdays = 0
+        while current <= end_date:
+            if current.weekday() < 5:
+                if position.startswith("Security Guard") and department == "Security":
+                    if position == "Security Guard A":
+                        shift = self.GUARD_SHIFTS[0]
+                    elif position == "Security Guard B":
+                        shift = self.GUARD_SHIFTS[1]
+                    else:
+                        shift = self.GUARD_SHIFTS[2]
+
+                    schedule[current.strftime('%Y-%m-%d')] = f"{position}: {shift['shift_name']} (1HR Break)"
+                else:
+                    shift_def = self.POSITION_SHIFTS.get(position, {"start": time(8, 0), "end": time(16, 0), "window_hours": 8})
+                    schedule[current.strftime('%Y-%m-%d')] = (
+                        f"Work Day: {shift_def['start'].strftime('%I:%M %p')} - {shift_def['end'].strftime('%I:%M %p')} (1HR Break)"
+                    )
+                weekdays += 1
+            else:
+                schedule[current.strftime('%Y-%m-%d')] = "Rest Day (Weekend)"
+            current += timedelta(days=1)
+
+        cursor.close()
+        return schedule, weekdays
+
+    def get_attendance_summary(self, employee_id, start_date, end_date):
+        cursor = self.conn.cursor()
+
+        query = """
+            SELECT date, time_in, time_out
+            FROM attendance
+            WHERE employee_id = ? AND date BETWEEN ? AND ?
+            ORDER BY date
+        """
+        cursor.execute(query, (employee_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
+        records = cursor.fetchall()
+
+        approved_leaves = self.get_approved_leaves(employee_id, start_date, end_date)
+
+        full_schedule, _ = self.get_employee_schedule(employee_id, start_date.month, start_date.year)
+        schedule = {
+            d: full_schedule[d] for d in full_schedule
+            if start_date.strftime('%Y-%m-%d') <= d <= end_date.strftime('%Y-%m-%d')
+        }
+
+        total_working_days = sum(1 for d, v in schedule.items() if ("Work Day" in v) or ("Shift" in v))
+
+        attendance_map = {}
+        for d, tin, tout in records:
+            attendance_map[d] = (tin, tout)
+
+        total_overtime_hours = 0.0
+        total_tardiness_minutes = 0.0
+        total_undertime_minutes = 0.0
+
+        days_present = 0.0
+        logged_dates = set()
+
+        for d in sorted(schedule.keys()):
+            day_label = schedule[d]
+
+            if "Rest Day" in day_label:
+                continue
+
+            if d in approved_leaves:
+                _, leave_days = approved_leaves[d]
+                days_present += leave_days
+                continue
+
+            tin_tout = attendance_map.get(d)
+            if not tin_tout:
+                continue
+
+            time_in_str, time_out_str = tin_tout
+
+            if time_in_str and time_out_str:
+                logged_dates.add(d)
+                days_present += 1.0
+
+            try:
+                if "Shift" in day_label:
+                    shift = next((s for s in self.GUARD_SHIFTS if s["shift_name"] in day_label), None)
+                    if not shift:
+                        continue
+                    sch_start = shift["start"]
+                    sch_end = shift["end"]
+                    window_hours = shift["window_hours"]
+                else:
+                    emp_pos_row = cursor.execute("SELECT position FROM employees WHERE id=?", (employee_id,)).fetchone()
+                    emp_pos = emp_pos_row[0] if emp_pos_row else None
+                    shift_def = self.POSITION_SHIFTS.get(emp_pos, {"start": time(8, 0), "end": time(16, 0), "window_hours": 8})
+                    sch_start = shift_def["start"]
+                    sch_end = shift_def["end"]
+                    window_hours = shift_def["window_hours"]
+
+                paid_hours = window_hours - config.LUNCH_BREAK_HOURS
+
+                att_date = datetime.datetime.strptime(d, "%Y-%m-%d").date()
+                sch_start_dt = datetime.datetime.combine(att_date, sch_start)
+                sch_end_dt = datetime.datetime.combine(att_date, sch_end)
+                if sch_end <= sch_start:
+                    sch_end_dt += timedelta(days=1)
+
+                if time_in_str:
+                    time_in_dt = datetime.datetime.strptime(f"{d} {time_in_str}", "%Y-%m-%d %H:%M:%S")
+                else:
+                    time_in_dt = None
+
+                if time_out_str:
+                    time_out_dt = datetime.datetime.strptime(f"{d} {time_out_str}", "%Y-%m-%d %H:%M:%S")
+                else:
+                    time_out_dt = None
+
+                if time_out_dt and time_out_dt <= time_in_dt:
+                    time_out_dt += timedelta(days=1)
+
+                if time_in_dt and time_in_dt < sch_start_dt:
+                    time_in_dt = sch_start_dt
+
+                if time_in_dt and time_in_dt > sch_start_dt:
+                    tardiness_duration = time_in_dt - sch_start_dt
+                    total_tardiness_minutes += tardiness_duration.total_seconds() / 60.0
+
+                if time_out_dt and time_out_dt < sch_end_dt:
+                    undertime_duration = sch_end_dt - time_out_dt
+                    total_undertime_minutes += undertime_duration.total_seconds() / 60.0
+
+                if time_out_dt and time_out_dt > sch_end_dt:
+                    overtime_duration = time_out_dt - sch_end_dt
+                    total_overtime_hours += overtime_duration.total_seconds() / 3600.0
+
+            except Exception:
+                continue
+
+        total_leave_days = sum(v for _, v in approved_leaves.values())
+
+        cursor.close()
+
+        return {
+            'days_present': days_present,
+            'total_overtime_hours': round(total_overtime_hours, 2),
+            'total_working_days': total_working_days,
+            'approved_leaves_days': total_leave_days,
+            'total_tardiness_minutes': round(total_tardiness_minutes, 2),
+            'total_undertime_minutes': round(total_undertime_minutes, 2),
+        }
+
+    def calculate_pay(self, employee_id, month, year, period=1):
+        cursor = self.conn.cursor()
+        emp_row = cursor.execute("SELECT salary FROM employees WHERE id=?", (employee_id,)).fetchone()
+        if not emp_row:
+            cursor.close()
+            return None, "Employee not found."
+
+        monthly_salary = emp_row[0]
+        daily_rate = self.calculate_daily_rate(monthly_salary)
+        hourly_rate = daily_rate / config.STANDARD_PAID_HOURS
+        minute_rate = hourly_rate / 60.0
+
+        if period == 1:
+            start_date = date(year, month, 1)
+            end_date = date(year, month, 15)
+            period_label = "1st Half (1-15)"
+        else:
+            start_date = date(year, month, 16)
+            end_of_month = (date(year, month, 1).replace(day=28) + timedelta(days=4))
+            end_of_month = end_of_month - timedelta(days=end_of_month.day)
+            end_date = end_of_month
+            period_label = "2nd Half (16-End)"
+
+        attendance = self.get_attendance_summary(employee_id, start_date, end_date)
+
+        total_working_days = attendance['total_working_days']
+        days_present = attendance['days_present']
+        total_overtime_hours = attendance['total_overtime_hours']
+        approved_leaves_days = attendance['approved_leaves_days']
+        total_tardiness_minutes = attendance['total_tardiness_minutes']
+        total_undertime_minutes = attendance['total_undertime_minutes']
+
+        days_absent = total_working_days - days_present
+        if days_absent < 0:
+            days_absent = 0.0
+
+        absence_deduction = days_absent * daily_rate
+        tardiness_deduction = total_tardiness_minutes * minute_rate
+        undertime_deduction = total_undertime_minutes * minute_rate
+        total_time_based_deduction = tardiness_deduction + undertime_deduction
+
+        base_pay = days_present * daily_rate
+        overtime_pay = total_overtime_hours * hourly_rate * 1.25
+        gross_pay = base_pay + overtime_pay
+
+        sss_m, pagibig_m, phil_m, tax_m = self.calculate_deductions(monthly_salary)
+        sss = sss_m / 2.0
+        pagibig = pagibig_m / 2.0
+        philhealth = phil_m / 2.0
+        tax = tax_m / 2.0
+        total_mandatory_deductions = sss + pagibig + philhealth + tax
+
+        loan_deduction = 0.0
+        loans = cursor.execute("""
+            SELECT id, remaining_balance FROM loans
+            WHERE employee_id = ? AND status = 'Approved' AND remaining_balance > 0
+            ORDER BY date_requested ASC
+        """, (employee_id,)).fetchall()
+
+        remaining_to_deduct = gross_pay * 0.10
+        for loan_id, remaining_balance in loans:
+            if remaining_to_deduct <= 0:
+                break
+            deduct_now = min(remaining_balance, remaining_to_deduct)
+            loan_deduction += deduct_now
+            remaining_to_deduct -= deduct_now
+            cursor.execute("UPDATE loans SET remaining_balance = remaining_balance - ? WHERE id = ?", (deduct_now, loan_id))
+
+        total_deductions = total_mandatory_deductions + absence_deduction + total_time_based_deduction + loan_deduction
+        net_pay = gross_pay - total_deductions
+
+        report = {
+            'month': date(year, month, 1).strftime("%B %Y"),
+            'period_label': period_label,
+            'monthly_salary': monthly_salary,
+            'daily_rate': round(daily_rate, 2),
+            'hourly_rate': round(hourly_rate, 2),
+            'days_present': round(days_present - approved_leaves_days, 2),
+            'approved_leaves_days': approved_leaves_days,
+            'days_absent': round(days_absent, 2),
+            'total_overtime_hours': round(total_overtime_hours, 2),
+            'base_pay': round(base_pay, 2),
+            'overtime_pay': round(overtime_pay, 2),
+            'gross_pay': round(gross_pay, 2),
+            'sss': round(sss, 2),
+            'pagibig': round(pagibig, 2),
+            'philhealth': round(philhealth, 2),
+            'tax': round(tax, 2),
+            'absence_deduction': round(absence_deduction, 2),
+            'total_tardiness_minutes': total_tardiness_minutes,
+            'total_undertime_minutes': total_undertime_minutes,
+            'tardiness_deduction': round(tardiness_deduction, 2),
+            'undertime_deduction': round(undertime_deduction, 2),
+            'loan_deduction': round(loan_deduction, 2),
+            'total_mandatory_deductions': round(total_mandatory_deductions, 2),
+            'total_deductions': round(total_deductions, 2),
+            'net_pay': round(net_pay, 2)
+        }
+
+        period_key = f"{report['month']} - {report['period_label']}"
+        cursor.execute("""
+            INSERT OR REPLACE INTO payroll (employee_id, month_year, gross_pay, total_deductions, net_pay)
+            VALUES (?, ?, ?, ?, ?)
+        """, (employee_id, period_key, report['gross_pay'], report['total_deductions'], report['net_pay']))
+        self.conn.commit()
+        cursor.close()
+
+        return report, None
