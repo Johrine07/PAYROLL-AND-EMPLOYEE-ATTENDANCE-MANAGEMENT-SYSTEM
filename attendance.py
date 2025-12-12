@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, time
 from typing import List, Dict, Tuple, Optional
 
 from time_utils import TimeHelper
@@ -51,6 +51,7 @@ def get_attendance_report(db_conn, payroll_system, emp_id: str, month: int, year
     rows = []
     days_present = 0.0
     days_absent = 0.0
+    total_overtime_hours = 0.0
 
     for date_str, day_info in schedule.items():
         if "Rest Day" in day_info:
@@ -62,6 +63,7 @@ def get_attendance_report(db_conn, payroll_system, emp_id: str, month: int, year
         overtime_val: Optional[float] = None
         if time_out != "-":
             try:
+                 sch_start = None
                 sch_end = None
                 if emp_pos and emp_pos.startswith("Security Guard") and emp_dept == "Security":
                     if emp_pos.endswith("A"):
@@ -70,14 +72,16 @@ def get_attendance_report(db_conn, payroll_system, emp_id: str, month: int, year
                         shift = payroll_system.GUARD_SHIFTS[1]
                     else:
                         shift = payroll_system.GUARD_SHIFTS[2]
+                    sch_start = shift.get('start')
                     sch_end = shift.get('end')
                 else:
                     shift_def = payroll_system.POSITION_SHIFTS.get(emp_pos, {"start": datetime.time(8, 0), "end": datetime.time(16, 0)})
                     sch_end = shift_def.get('end')
 
-                if sch_end:
-                    ot = TimeHelper.calculate_overtime_hours(sch_end, date_str, time_out)
-                    overtime_val = ot
+                 ot = None
+                if sch_start and sch_end:
+                    ot = TimeHelper.calculate_overtime_hours(sch_start, sch_end, date_str, time_out)
+                overtime_val = ot
             except Exception:
                 overtime_val = None
 
@@ -106,3 +110,4 @@ def get_attendance_report(db_conn, payroll_system, emp_id: str, month: int, year
         "days_absent": days_absent,
     }
     return rows, summary
+
