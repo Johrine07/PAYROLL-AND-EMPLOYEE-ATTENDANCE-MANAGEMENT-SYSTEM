@@ -376,7 +376,7 @@ Employee ID: {emp_id:<20} | Period: {report['month']} - {report['period_label']}
             self.att_tree.insert('', tk.END, values=(r['date'], r['time_in'], r['time_out'], overtime_display, r['status']), tags=(tag,))
 
         self.att_summary_label.config(
-            text=f"Summary: Present: {summary['days_present']}, Absent: {summary['days_absent']}, Total Workdays: {summary['total_workdays']}",
+            text=f"Summary: Present: {summary['days_present']}, Absent: {summary['days_absent']}, Total Workdays: {summary['total_workdays']}, Overtime Hours: {summary.get('total_overtime_hours', 0.0):.2f}",
             foreground='black'
         )
 
@@ -780,4 +780,5 @@ Employee ID: {emp_id:<20} | Period: {report['month']} - {report['period_label']}
             messagebox.showinfo("Success", message)
             self.loan_amount_entry.delete(0, tk.END)
         else:
+
             messagebox.showerror("Error", message)
