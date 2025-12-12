@@ -62,15 +62,21 @@ Payroll Computation When generating payroll, the system reads:
 The system computes: Earnings:
 
 • Base pay for the days worked
+
 • Overtime pays 
+
 • Leave pay 
 
 Deductions: 
 
 • Absence deduction
+
 • Tardiness deduction 
+
 • Undertime deduction
+
 • Government contributions 
+
 • Loan repayment 
 
 The result is: NET PAY = GROSS PAY – TOTAL DEDUCTIONS
