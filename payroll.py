@@ -1,5 +1,6 @@
 import datetime
 from datetime import timedelta, time, date
+from time_utils import TimeHelper
 import config
 
 
@@ -118,7 +119,8 @@ class PayrollSystem:
             if start_date.strftime('%Y-%m-%d') <= d <= end_date.strftime('%Y-%m-%d')
         }
 
-        total_working_days = sum(1 for d, v in schedule.items() if ("Work Day" in v) or ("Shift" in v))
+        # determine expected working days for this period based on filtered schedule
+        total_working_days = sum(1 for d, label in schedule.items() if 'Rest Day' not in label)
 
         attendance_map = {}
         for d, tin, tout in records:
@@ -203,6 +205,11 @@ class PayrollSystem:
                 if time_out_dt and time_out_dt > sch_end_dt:
                     overtime_duration = time_out_dt - sch_end_dt
                     total_overtime_hours += overtime_duration.total_seconds() / 3600.0
+
+                 # Use TimeHelper.calculate_overtime_hours to compute OT consistently
+                ot_hours = TimeHelper.calculate_overtime_hours(sch_start, sch_end, d, time_out_str)
+                if ot_hours is not None:
+                    total_overtime_hours += ot_hours
 
             except Exception:
                 continue
@@ -328,3 +335,4 @@ class PayrollSystem:
         cursor.close()
 
         return report, None
+
