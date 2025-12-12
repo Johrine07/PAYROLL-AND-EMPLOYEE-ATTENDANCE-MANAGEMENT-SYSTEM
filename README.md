@@ -27,6 +27,7 @@ Access and Login
 Admin Access
 
 • Admin Code (Default): admin0107 
+
 • Functionality: Allows access to the Admin Dashboard, which includes:
 - Employee Data management (Add, Edit, Delete)
 - Payroll Calculation
@@ -35,11 +36,11 @@ Admin Access
   
 Employee Time Clock
 
-• Requirement: Requires a valid Employee ID (e.g., EMP001). 
+  • Requirement: Requires a valid Employee ID (e.g., EMP001). 
 
-• Functionality: Allows the specific employee to: Clock IN and Clock OUT for the day. 
+  • Functionality: Allows the specific employee to: Clock IN and Clock OUT for the day. 
 
-• Applying for loans and leave
+  • Applying for loans and leave
 
 -----------------------------------------------------------------------------------------------------------
 
@@ -49,35 +50,35 @@ The program starts the Tkinter GUI, which allows the user to access modules.
 
 Employee Registration Through the GUI, the user can add:
 
-• Employee ID, Name, Position, Department, Monthly Salary
+  • Employee ID, Name, Position, Department, Monthly Salary
 
 Attendance Recording The user enters: 
 
-• Employee ID, Date, Time In, Time Out, 
+  • Employee ID, Date, Time In, Time Out, 
 
 Payroll Computation When generating payroll, the system reads: 
 
-• Employee Information, Attendance Records, Leave Records, and Loan Records 
+  • Employee Information, Attendance Records, Leave Records, and Loan Records 
 
 The system computes: Earnings:
 
-• Base pay for the days worked
+  • Base pay for the days worked
 
-• Overtime pays 
+  • Overtime pays 
 
-• Leave pay 
+  • Leave pay 
 
 Deductions: 
 
-• Absence deduction
+  • Absence deduction
 
-• Tardiness deduction 
+  • Tardiness deduction 
 
-• Undertime deduction
+  • Undertime deduction
 
-• Government contributions 
+  • Government contributions 
 
-• Loan repayment 
+  • Loan repayment 
 
 The result is: NET PAY = GROSS PAY – TOTAL DEDUCTIONS
 
