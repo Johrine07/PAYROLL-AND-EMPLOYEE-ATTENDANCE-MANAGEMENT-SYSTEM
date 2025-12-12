@@ -102,12 +102,17 @@ def get_attendance_report(db_conn, payroll_system, emp_id: str, month: int, year
             "overtime": overtime_val,
             "status": status,
         })
+         if overtime_val is not None:
+            try:
+                total_overtime_hours += float(overtime_val)
+            except Exception:
+                pass
 
     cursor.close()
     summary = {
         "total_workdays": total_workdays,
         "days_present": days_present,
         "days_absent": days_absent,
+        "total_overtime_hours": round(total_overtime_hours, 2),
     }
     return rows, summary
-
